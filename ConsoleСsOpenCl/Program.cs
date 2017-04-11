@@ -156,13 +156,14 @@ namespace ConsoleСsOpenCl
             string[] cdDevices; // список id доступних пристроїв
             uint ciDeviceCount = 0; // кількість доступних пристроїв
             const Int32 szGlobalWorkSize = 81920; // загальна кількість work-items, які будуть виконуватись
-            Int64 offset = 0;
+            Int64 [] offset = new Int64[1];
             const Int16 GroupWorkSize = 128; // ниток в блоці
 
             ComputeBuffer<byte> _devinText;
             ComputeBuffer<byte> _devkey;
             ComputeBuffer<byte> _devoutData;
             ComputeBuffer<byte> _devcorrectDataTemp;
+            ComputeBuffer<Int64> _devoffset;
 
             //кінець ініціалізації
 
@@ -251,11 +252,11 @@ namespace ConsoleСsOpenCl
             }
 
 
-            __kernel void bit_key_finder(__global  unsigned char *inData, __global unsigned char * key, __global unsigned char * outData, __global unsigned char * correctDataTemp, ulong offset/*, __global const unsigned char *Gamma*/)
+            __kernel void bit_key_finder(__global  unsigned char *inData, __global unsigned char * key, __global unsigned char * outData, __global unsigned char * correctDataTemp, __global ulong* offset)
             {
 	            u64 globID = get_global_id(0); //індекс нитки в глобаьній сітці
 	            u32  locID = get_local_id(0); // індекс нитки в блоці
-	            size_t i = (81920 * offset) + globID; // глобальний зсув кожної іттерації
+	            size_t i = (81920 * offset[0]) + globID; // глобальний зсув кожної іттерації
 
 	            if (i > 1099511627776) // 2^40
 	            {
@@ -332,14 +333,14 @@ namespace ConsoleСsOpenCl
             //}
 
             /*доступні GPU OpenCL devices*/
-            contextPropetyList = new ComputeContextPropertyList(ComputePlatform.Platforms[0]);
+            contextPropetyList = new ComputeContextPropertyList(ComputePlatform.Platforms[1]);
             context = new ComputeContext(ComputeDeviceTypes.Gpu, contextPropetyList, null, IntPtr.Zero);
             ciDeviceCount = (uint)context.Devices.Count; // получить количесто доступных GPU devices
             cdDevices = new string[ciDeviceCount]; // создать масив для записи id  доступых GPU devices
             for (int i = 0; i < ciDeviceCount; i++)
             {
                 cdDevices[i] = context.Devices[i].Name;
-                Devs.Add(ComputePlatform.Platforms[0].Devices[i]);
+                Devs.Add(ComputePlatform.Platforms[1].Devices[i]);
                 Console.WriteLine("> OpenCL Devices #{0}  device_name: {1}\n", i, cdDevices[i]); // вывести имена всех доступых GPU devices               
             }
 
@@ -358,6 +359,8 @@ namespace ConsoleСsOpenCl
             _devkey = new ComputeBuffer<byte>(context, ComputeMemoryFlags.ReadWrite, key); // 10 байт - флажок done
             _devoutData = new ComputeBuffer<byte>(context, ComputeMemoryFlags.ReadWrite, outData);
             _devcorrectDataTemp = new ComputeBuffer<byte>(context, ComputeMemoryFlags.ReadOnly, inText);
+            
+            
 
 
             /* Створення програми з хоста*/
@@ -368,7 +371,7 @@ namespace ConsoleСsOpenCl
 
             /* Створення OpenCL Kernel */
             //Ініціалізація нової програми
-            kernel = program.CreateKernel("floatVectorSum");
+            kernel = program.CreateKernel("bit_key_finder");
 
 
             /* Відправка параметрів OpenCL Kernel*/
@@ -380,12 +383,13 @@ namespace ConsoleСsOpenCl
 
             do
             {
-                // ret = clSetKernelArg(kernel, 4, sizeof(size_t), (void*)&offset);
-                kernel.SetLocalArgument(4,offset);
+                // ret = clSetKernelArg(kernel, 4, sizeof(size_t), (void*)&offset);      
+                _devoffset = new ComputeBuffer<Int64>(context, ComputeMemoryFlags.ReadWrite, offset);
+                kernel.SetMemoryArgument(3, _devoffset);
                 command_queue.Execute(kernel, null,  new long[] { szGlobalWorkSize }, new long[] { GroupWorkSize }, null);
                 GCHandle keyHandle = GCHandle.Alloc(key, GCHandleType.Pinned);
                 command_queue.Read<byte>(_devkey, true, 0, 10 , keyHandle.AddrOfPinnedObject(), null);
-                offset++;
+                offset[0]++;
             } while (key[9] != 1); // 10-й байт ключа - флажок!
 
             Time.Stop();
